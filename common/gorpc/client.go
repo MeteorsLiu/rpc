@@ -3,6 +3,7 @@ package gorpc
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -229,8 +230,11 @@ func (g *GoRPCClient) Call(serviceMethod string, args any, reply any) (err error
 		return
 	}
 	if err = conn.Call(serviceMethod, args, reply); err != nil {
-		g.conn.Put(id, err)
-		return
+		// we only need reconnect when the connection is broken.
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			g.conn.Put(id, err)
+			return
+		}
 	}
 	g.conn.Put(id)
 	return nil
