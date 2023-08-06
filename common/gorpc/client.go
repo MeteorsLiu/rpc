@@ -10,21 +10,26 @@ import (
 	"net/rpc"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MeteorsLiu/rpc/adapter"
-	"github.com/alphadose/haxmap"
 )
 
 var (
-	ErrConnect = fmt.Errorf("fail to connect to the target address")
+	ErrConnect     = fmt.Errorf("fail to connect to the target address")
+	ErrInitialized = fmt.Errorf("fail to initilize the connection pool")
+	ErrNoServer    = fmt.Errorf("no rpc server")
 )
 
-type ClientOption func(*GoRPCClient)
+func IsRPCServerError(err error) bool {
+	_, ok := err.(rpc.ServerError)
+	return ok
+}
 
-type DialerFunc func() (io.ReadWriteCloser, error)
+type RPCClientOption func(*GoRPCClient)
 
-func WithServerCert(cert []byte) ClientOption {
+func WithCACert(cert []byte) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		if gr.tls == nil {
 			gr.tls = &tls.Config{}
@@ -36,7 +41,7 @@ func WithServerCert(cert []byte) ClientOption {
 	}
 }
 
-func WithClientCert(cert tls.Certificate) ClientOption {
+func WithClientCert(cert tls.Certificate) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		if gr.tls == nil {
 			gr.tls = &tls.Config{}
@@ -48,25 +53,32 @@ func WithClientCert(cert tls.Certificate) ClientOption {
 	}
 }
 
-func WithClientTLSConfig(c *tls.Config) ClientOption {
+func WithClientDialer(dialer adapter.DialerFunc) RPCClientOption {
+	return func(gr *GoRPCClient) {
+		gr.conn = newConnPool(dialer)
+	}
+}
+
+func WithClientTLSConfig(c *tls.Config) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		gr.tls = c
 	}
 }
 
-func DefaultDialerFunc(address string) DialerFunc {
+func DefaultDialerFunc(address string) adapter.DialerFunc {
 	return func() (io.ReadWriteCloser, error) {
 		return net.DialTimeout("tcp", address, 30*time.Second)
 	}
 }
 
-func DefaultTLSDialerFunc(address string, c *tls.Config) DialerFunc {
+func DefaultTLSDialerFunc(address string, c *tls.Config) adapter.DialerFunc {
 	return func() (io.ReadWriteCloser, error) {
 		return tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", address, c)
 	}
 }
 
 type conn struct {
+	id  int
 	c   *rpc.Client
 	err error
 	sync.Mutex
@@ -76,9 +88,11 @@ type conn struct {
 // enqueue will be pushed into the tail,
 // dequeue will be poped from the head.
 type connPool struct {
-	pushMu     sync.Mutex
-	connWarper DialerFunc
-	conns      *haxmap.Map[int, *conn]
+	updateMu   sync.RWMutex
+	resizeMu   sync.RWMutex
+	seq        atomic.Int64
+	connWarper adapter.DialerFunc
+	conns      []*conn
 }
 
 func newConn(c io.ReadWriteCloser) *conn {
@@ -98,7 +112,7 @@ func (c *conn) SetConn(cc io.ReadWriteCloser) {
 	c.c = rpc.NewClient(cc)
 }
 
-func (c *conn) Reconnect(dialer DialerFunc, onSuccess func(*conn), onFail func(*conn)) error {
+func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFail func(*conn)) error {
 	cc, err := dialer()
 	if err != nil {
 		c.err = err
@@ -115,29 +129,49 @@ func (c *conn) Reconnect(dialer DialerFunc, onSuccess func(*conn), onFail func(*
 	return nil
 }
 
-func newConnPool(c DialerFunc) *connPool {
+func newConnPool(c adapter.DialerFunc) *connPool {
 	cp := &connPool{
 		connWarper: c,
-		conns:      haxmap.New[int, *conn](),
+		conns:      make([]*conn, 128),
 	}
+
 	newc, err := c()
 	if err != nil {
 		return nil
 	}
-	cp.conns.Set(0, newConn(newc))
+
+	cp.conns[0] = newConn(newc)
 	return cp
 }
 
+func (c *connPool) dial() (io.ReadWriteCloser, error) {
+	var dialerFunc adapter.DialerFunc
+	c.updateMu.RLock()
+	dialerFunc = c.connWarper
+	c.updateMu.RUnlock()
+	return dialerFunc()
+}
+
 func (c *connPool) new() (id int, cn *conn, err error) {
-
-	c.pushMu.Lock()
-	id = int(c.conns.Len())
+	id = int(c.seq.Add(1))
 	cn = newConn(nil)
+	cn.id = id
 	cn.Lock()
-	c.conns.Set(id, cn)
-	c.pushMu.Unlock()
-
-	newc, err := c.connWarper()
+	resize := false
+	if id >= cap(c.conns) {
+		c.resizeMu.Lock()
+		if id >= cap(c.conns) {
+			// let append to call growslice() to resize the slices.
+			c.conns = append(c.conns, cn)
+			c.conns = c.conns[:cap(c.conns)]
+			resize = true
+		}
+		c.resizeMu.Unlock()
+	}
+	if !resize {
+		c.conns[id] = cn
+	}
+	newc, err := c.dial()
 	if err != nil {
 		cn.err = err
 		cn.Unlock()
@@ -147,22 +181,41 @@ func (c *connPool) new() (id int, cn *conn, err error) {
 	return
 }
 
+func (c *connPool) forEach(f func(int, *conn) bool) {
+	c.resizeMu.RLock()
+	defer c.resizeMu.RUnlock()
+	// don't use range, because range will do a large copy
+	for id := 0; id < len(c.conns); id++ {
+		current := c.conns[id]
+		if current == nil || !f(id, current) {
+			return
+		}
+	}
+}
+
 func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 	var cn *conn
 	var err error
-	for id = 0; id < int(c.conns.Len()); id++ {
-		cn, ok = c.conns.Get(id)
-		if ok && cn.TryLock() {
+
+	c.forEach(func(i int, cn *conn) bool {
+		if cn.TryLock() {
 			if cn.err != nil {
-				if err := cn.Reconnect(c.connWarper, nil, func(cnn *conn) {
+				if err := cn.Reconnect(c.dial, nil, func(cnn *conn) {
 					cnn.Unlock()
 				}); err != nil {
-					continue
+					return true
 				}
 			}
+			id = i
 			cc = cn.c
-			return
+			ok = true
+			return false
 		}
+		return true
+	})
+
+	if ok {
+		return
 	}
 	// no connections
 	id, cn, err = c.new()
@@ -172,26 +225,33 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 	return
 }
 
-func (c *connPool) Remove(id int) {
-	c.conns.Del(id)
-}
-
 func (c *connPool) Put(id int, err ...error) {
-	cn, ok := c.conns.Get(id)
-	if !ok {
+	if id >= cap(c.conns) {
 		return
 	}
+	cn := c.conns[id]
+	if cn == nil {
+		return
+	}
+
 	if len(err) > 0 && err[0] != nil {
 		cn.err = err[0]
 		cn.c.Close()
-		cn.Reconnect(c.connWarper, nil, nil)
+		cn.Reconnect(c.dial, nil, nil)
 	}
 	cn.Unlock()
 }
 
+func (c *connPool) setServer(dialer adapter.DialerFunc) {
+	c.updateMu.Lock()
+	defer c.updateMu.Unlock()
+
+	c.connWarper = dialer
+}
+
 func (c *connPool) Close() error {
 	var err error
-	c.conns.ForEach(func(id int, c *conn) bool {
+	c.forEach(func(id int, c *conn) bool {
 		if e := c.c.Close(); e != nil {
 			err = e
 		}
@@ -205,9 +265,9 @@ type GoRPCClient struct {
 	tls  *tls.Config
 }
 
-func NewGoRPCClient(address string, opts ...ClientOption) adapter.Client {
+func NewGoRPCClient(address string, opts ...RPCClientOption) (adapter.Client, error) {
 	if address == "" {
-		return nil
+		return nil, ErrNoServer
 	}
 	cc := &GoRPCClient{}
 	for _, o := range opts {
@@ -219,8 +279,11 @@ func NewGoRPCClient(address string, opts ...ClientOption) adapter.Client {
 	case cc.tls != nil && cc.conn == nil:
 		cc.conn = newConnPool(DefaultTLSDialerFunc(address, cc.tls))
 	}
+	if cc.conn == nil {
+		return nil, ErrInitialized
+	}
 
-	return cc
+	return cc, nil
 }
 
 func (g *GoRPCClient) Call(serviceMethod string, args any, reply any) (err error) {
@@ -231,7 +294,7 @@ func (g *GoRPCClient) Call(serviceMethod string, args any, reply any) (err error
 	}
 	if err = conn.Call(serviceMethod, args, reply); err != nil {
 		// we only need reconnect when the connection is broken.
-		if errors.Is(err, io.ErrUnexpectedEOF) {
+		if !errors.Is(err, rpc.ErrShutdown) && !IsRPCServerError(err) {
 			g.conn.Put(id, err)
 			return
 		}
@@ -240,6 +303,29 @@ func (g *GoRPCClient) Call(serviceMethod string, args any, reply any) (err error
 	return nil
 }
 
+func (g *GoRPCClient) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, args any, reply any) error {
+	// don't use conn pool
+	nrpc := rpc.NewClient(conn)
+	defer nrpc.Close()
+	return nrpc.Call(serviceMethod, args, reply)
+}
+
 func (g *GoRPCClient) Close() error {
 	return g.conn.Close()
+}
+
+func (g *GoRPCClient) SetRPCServer(address string) error {
+	if address == "" {
+		return ErrNoServer
+	}
+	if g.tls != nil {
+		g.conn.setServer(DefaultTLSDialerFunc(address, g.tls))
+	} else {
+		g.conn.setServer(DefaultDialerFunc(address))
+	}
+	return nil
+}
+
+func (g *GoRPCClient) SetDialer(dialer adapter.DialerFunc) {
+	g.conn.setServer(dialer)
 }
