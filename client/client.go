@@ -22,6 +22,7 @@ type Job struct {
 }
 
 type Client struct {
+	block       bool
 	noretry     bool
 	finalizers  []queue.Finalizer
 	middlewares []Middleware
@@ -61,9 +62,16 @@ func DisableRetry() Options {
 	}
 }
 
+func EnableNonBlocking() Options {
+	return func(c *Client) {
+		c.block = false
+	}
+}
+
 func NewClient(rpc adapter.Client, opts ...Options) *Client {
 	c := &Client{
-		nq: worker.NewWorker(0, 0, nil, true),
+		block: true,
+		nq:    worker.NewWorker(0, 0, nil, true),
 		// limit the worker number
 		mq:  worker.NewWorker(10000, 100, queue.NewSimpleQueue(queue.WithSimpleQueueCap(10000)), true),
 		rpc: rpc,
@@ -109,16 +117,17 @@ func (c *Client) doSaveJob(task queue.Task, serviceMethod string, args any, repl
 	c.storage.Store(job.ID, b)
 }
 
-func (c *Client) newTask(serviceMethod string, args any, reply any) queue.Task {
+func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queue.TaskOptions) queue.Task {
 	var task queue.Task
 	if c.noretry {
+		opts = append(opts, queue.WithNoRetryFunc())
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
 				return nil
 			}
 			return err
-		}, queue.WithNoRetryFunc())
+		}, opts...)
 	} else {
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
@@ -126,7 +135,7 @@ func (c *Client) newTask(serviceMethod string, args any, reply any) queue.Task {
 				return nil
 			}
 			return err
-		})
+		}, opts...)
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
 	return task
@@ -144,6 +153,9 @@ func (c *Client) CallWithNoMQ(serviceMethod string, args any, reply any, finaliz
 				f(ok, task)
 			}
 		})
+		if c.block {
+			task.Wait()
+		}
 		return nil
 	}
 	return task.Do()
@@ -163,10 +175,32 @@ func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...qu
 			for _, f := range finalizer {
 				f(ok, task)
 			}
+
 		})
+		if c.block {
+			task.Wait()
+		}
 		return nil
 	}
 	return task.Do()
+}
+
+func (c *Client) CallOnce(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
+	task := c.newTask(serviceMethod, args, reply, queue.WithNoRetryFunc())
+
+	c.nq.Publish(task, func(ok bool, task queue.Task) {
+		for _, f := range c.finalizers {
+			f(ok, task)
+		}
+		for _, f := range finalizer {
+			f(ok, task)
+		}
+	})
+	if c.block {
+		task.Wait()
+	}
+	return nil
+
 }
 
 func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, args any, reply any) error {
@@ -192,6 +226,9 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 
 	if !c.noretry {
 		c.mq.Publish(task)
+		if c.block {
+			task.Wait()
+		}
 		return nil
 	}
 	return task.Do()
