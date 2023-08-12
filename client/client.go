@@ -23,6 +23,7 @@ type Job struct {
 
 type Client struct {
 	noretry     bool
+	finalizers  []queue.Finalizer
 	middlewares []Middleware
 	nq          *worker.Worker
 	mq          *worker.Worker
@@ -48,6 +49,12 @@ func WithMiddleware(m Middleware) Options {
 	}
 }
 
+func WithFinalizer(f queue.Finalizer) Options {
+	return func(c *Client) {
+		c.finalizers = append(c.finalizers, f)
+	}
+}
+
 func DisableRetry() Options {
 	return func(c *Client) {
 		c.noretry = true
@@ -56,7 +63,7 @@ func DisableRetry() Options {
 
 func NewClient(rpc adapter.Client, opts ...Options) *Client {
 	c := &Client{
-		nq: worker.NewWorker(0, 0, nil, false),
+		nq: worker.NewWorker(0, 0, nil, true),
 		// limit the worker number
 		mq:  worker.NewWorker(10000, 100, queue.NewSimpleQueue(queue.WithSimpleQueueCap(10000)), true),
 		rpc: rpc,
@@ -125,23 +132,36 @@ func (c *Client) newTask(serviceMethod string, args any, reply any) queue.Task {
 	return task
 }
 
-func (c *Client) CallWithNoMQ(serviceMethod string, args any, reply any) error {
+func (c *Client) CallWithNoMQ(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply)
 
 	if !c.noretry {
-		c.nq.Publish(task)
+		c.nq.Publish(task, func(ok bool, task queue.Task) {
+			for _, f := range c.finalizers {
+				f(ok, task)
+			}
+			for _, f := range finalizer {
+				f(ok, task)
+			}
+		})
 		return nil
 	}
 	return task.Do()
 }
 
-func (c *Client) Call(serviceMethod string, args any, reply any) error {
+func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply)
 
 	if !c.noretry {
 		c.mq.Publish(task, func(ok bool, task queue.Task) {
 			if !ok {
 				c.doSaveJob(task, serviceMethod, args, reply)
+			}
+			for _, f := range c.finalizers {
+				f(ok, task)
+			}
+			for _, f := range finalizer {
+				f(ok, task)
 			}
 		})
 		return nil
