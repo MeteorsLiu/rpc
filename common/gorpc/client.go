@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/rpc"
+	"net/rpc/jsonrpc"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -109,7 +110,7 @@ func newConn(c io.ReadWriteCloser) *conn {
 }
 
 func (c *conn) SetConn(cc io.ReadWriteCloser) {
-	c.c = rpc.NewClient(cc)
+	c.c = jsonrpc.NewClient(cc)
 }
 
 func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFail func(*conn)) error {
@@ -219,9 +220,12 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 	}
 	// no connections
 	id, cn, err = c.new()
+	if err != nil {
+		cn.err = err
+		cn.Unlock()
+	}
 	ok = err == nil
 	cc = cn.c
-
 	return
 }
 
@@ -292,20 +296,25 @@ func (g *GoRPCClient) Call(serviceMethod string, args any, reply any) (err error
 		err = ErrConnect
 		return
 	}
+retry:
 	if err = conn.Call(serviceMethod, args, reply); err != nil {
 		// we only need reconnect when the connection is broken.
 		if !errors.Is(err, rpc.ErrShutdown) && !IsRPCServerError(err) {
 			g.conn.Put(id, err)
-			return
+			ok, id, conn = g.conn.Get()
+			if !ok {
+				return
+			}
+			goto retry
 		}
 	}
 	g.conn.Put(id)
-	return nil
+	return
 }
 
 func (g *GoRPCClient) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, args any, reply any) error {
 	// don't use conn pool
-	nrpc := rpc.NewClient(conn)
+	nrpc := jsonrpc.NewClient(conn)
 	defer nrpc.Close()
 	return nrpc.Call(serviceMethod, args, reply)
 }

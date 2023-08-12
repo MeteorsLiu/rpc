@@ -3,8 +3,11 @@ package gorpc
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"io"
+	"log"
 	"net"
 	"net/rpc"
+	"net/rpc/jsonrpc"
 
 	"github.com/MeteorsLiu/rpc/adapter"
 )
@@ -58,10 +61,29 @@ func NewGoRPCServer(opts ...RPCServerOption) adapter.Server {
 
 func (s *GoRPCServer) Accept(l net.Listener) {
 	if s.tls != nil {
-		s.Server.Accept(tls.NewListener(l, s.tls))
+		ll := tls.NewListener(l, s.tls)
+		for {
+			conn, err := ll.Accept()
+			if err != nil {
+				log.Print("rpc.Serve: tls accept:", err.Error())
+				return
+			}
+			go s.ServeConn(conn)
+		}
 	} else {
-		s.Server.Accept(l)
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				log.Print("rpc.Serve: accept:", err.Error())
+				return
+			}
+			go s.ServeConn(conn)
+		}
 	}
+}
+
+func (s *GoRPCServer) ServeConn(conn io.ReadWriteCloser) {
+	s.Server.ServeCodec(jsonrpc.NewServerCodec(conn))
 }
 
 func (s *GoRPCServer) AddCert(cert []byte) {

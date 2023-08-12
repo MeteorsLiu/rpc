@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MeteorsLiu/rpc/common/utils"
 	"github.com/alphadose/haxmap"
 )
 
@@ -27,7 +28,7 @@ type TestRPCStruct struct {
 }
 
 func (t *TestRPCStruct) Hello(args *TestArgs, reply *TestReply) error {
-	fmt.Println(args.A, args.ID)
+	fmt.Println("recv", args.A, args.ID)
 	reply.Ret = "B"
 	reply.ID = args.ID
 	return nil
@@ -103,7 +104,7 @@ func TestMTLSRPC(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:9999")
+	l, err := net.Listen("tcp", "127.0.0.1:9998")
 	if err != nil {
 		t.Error(err)
 		return
@@ -120,7 +121,7 @@ func TestMTLSRPC(t *testing.T) {
 	// wait until server starts
 	wg.Wait()
 
-	cli, _ := NewGoRPCClient("localhost:9999", WithCACert(ca), WithClientCert(clicert))
+	cli, _ := NewGoRPCClient("localhost:9998", WithCACert(ca), WithClientCert(clicert))
 	var reply TestReply
 	if err := cli.Call("TestRPCStruct.Hello", &TestArgs{"ccccc", 0}, &reply); err != nil {
 		t.Error(err)
@@ -128,4 +129,26 @@ func TestMTLSRPC(t *testing.T) {
 	if reply.ID != 0 {
 		t.Errorf("rpc result error")
 	}
+}
+
+func TestRPCMap(t *testing.T) {
+	l, _ := net.Listen("tcp", "127.0.0.1:9999")
+	defer l.Close()
+	srv := NewGoRPCServer()
+	srv.Register(&TestRPCStruct{})
+	cli, _ := NewGoRPCClient("127.0.0.1:9999")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		srv.Accept(l)
+	}()
+	// wait until server starts
+	wg.Wait()
+	tm := utils.ToMap(&TestArgs{"ccccc", 0})
+	//var reply TestReply
+	// time sleep is to check the numbers of reused connections.
+	time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+	cli.Call("TestRPCStruct.Hello", tm, nil)
+
 }
