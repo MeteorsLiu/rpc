@@ -131,17 +131,16 @@ func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queu
 		}, opts...)
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
-	task.OnDone(func(ok bool, task queue.Task) {
-		if !ok {
-			c.doSaveJob(task, serviceMethod, args, reply)
-		}
-	})
-
 	return task
 }
 
 func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply)
+	task.OnDone(func(ok bool, task queue.Task) {
+		if !ok {
+			c.doSaveJob(task, serviceMethod, args, reply)
+		}
+	})
 
 	c.mq.Publish(task, finalizer...)
 	return nil
@@ -149,6 +148,11 @@ func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer 
 
 func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply)
+	task.OnDone(func(ok bool, task queue.Task) {
+		if !ok {
+			c.doSaveJob(task, serviceMethod, args, reply)
+		}
+	})
 
 	if !c.block {
 		c.mq.Publish(task, finalizer...)
