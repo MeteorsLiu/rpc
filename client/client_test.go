@@ -49,7 +49,7 @@ func TestClient(t *testing.T) {
 
 	c.CallOnce("TestRPCStruct.Hello", &TestArgs{"ccc", 1}, &reply)
 	t.Log(reply)
-	c.CallWithNoMQ("TestRPCStruct.Hello", &TestArgs{"ddd", 2}, &reply)
+	c.CallAsync("TestRPCStruct.Hello", &TestArgs{"ddd", 2}, &reply)
 	t.Log(reply)
 
 	c.Close()

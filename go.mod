@@ -3,7 +3,7 @@ module github.com/MeteorsLiu/rpc
 go 1.20
 
 require (
-	github.com/MeteorsLiu/simpleMQ v0.0.0-20230812100301-f09e8e683fc6
+	github.com/MeteorsLiu/simpleMQ v0.0.0-20230812141202-c8d62f6132de
 	github.com/alphadose/haxmap v1.2.0
 	github.com/boltdb/bolt v1.3.1
 	github.com/redis/go-redis/v9 v9.0.5

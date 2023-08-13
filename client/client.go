@@ -73,7 +73,7 @@ func NewClient(rpc adapter.Client, opts ...Options) *Client {
 		block: true,
 		nq:    worker.NewWorker(0, 0, nil, true),
 		// limit the worker number
-		mq:  worker.NewWorker(10000, 100, queue.NewSimpleQueue(queue.WithSimpleQueueCap(10000)), true),
+		mq:  worker.NewWorker(10000, 1, queue.NewSimpleQueue(queue.WithSimpleQueueCap(10000)), true),
 		rpc: rpc,
 	}
 	for _, o := range opts {
@@ -138,72 +138,45 @@ func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queu
 		}, opts...)
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
+	task.OnDone(func(ok bool, task queue.Task) {
+		if !ok {
+			c.doSaveJob(task, serviceMethod, args, reply)
+		}
+	})
+	task.OnDone(c.finalizers...)
+
 	return task
 }
 
-func (c *Client) CallWithNoMQ(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
+func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply)
 
-	if !c.noretry {
-		c.nq.Publish(task, func(ok bool, task queue.Task) {
-			for _, f := range c.finalizers {
-				f(ok, task)
-			}
-			for _, f := range finalizer {
-				f(ok, task)
-			}
-		})
-		if c.block {
-			task.Wait()
-		}
-		return nil
-	}
-	return task.Do()
+	c.mq.Publish(task, finalizer...)
+	return nil
 }
 
 func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply)
 
-	if !c.noretry {
-		c.mq.Publish(task, func(ok bool, task queue.Task) {
-			if !ok {
-				c.doSaveJob(task, serviceMethod, args, reply)
-			}
-			for _, f := range c.finalizers {
-				f(ok, task)
-			}
-			for _, f := range finalizer {
-				f(ok, task)
-			}
-
-		})
-		if c.block {
-			task.Wait()
-		}
+	if !c.block {
+		c.mq.Publish(task, finalizer...)
 		return nil
 	}
-	return task.Do()
+	return c.nq.PublishSync(task, finalizer...)
 }
 
 func (c *Client) CallOnce(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply, queue.WithNoRetryFunc())
 
-	c.nq.Publish(task, func(ok bool, task queue.Task) {
-		for _, f := range c.finalizers {
-			f(ok, task)
-		}
-		for _, f := range finalizer {
-			f(ok, task)
-		}
-	})
-	if c.block {
-		task.Wait()
+	if !c.block {
+		c.nq.Publish(task, finalizer...)
+		return nil
 	}
-	return nil
+	return c.nq.PublishSync(task, finalizer...)
 
 }
 
-func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, args any, reply any) error {
+func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	var task queue.Task
 	if c.noretry {
 		task = queue.NewTask(func() error {
@@ -223,15 +196,13 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		})
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
-
-	if !c.noretry {
-		c.mq.Publish(task)
-		if c.block {
-			task.Wait()
-		}
+	task.OnDone(c.finalizers...)
+	task.OnDone(finalizer...)
+	if !c.block {
+		c.mq.Publish(task, finalizer...)
 		return nil
 	}
-	return task.Do()
+	return c.nq.PublishSync(task, finalizer...)
 }
 
 func (c *Client) Close() error {
