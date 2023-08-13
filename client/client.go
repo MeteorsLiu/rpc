@@ -24,7 +24,6 @@ type Job struct {
 type Client struct {
 	block       bool
 	noretry     bool
-	finalizers  []queue.Finalizer
 	middlewares []Middleware
 	nq          *worker.Worker
 	mq          *worker.Worker
@@ -47,12 +46,6 @@ func WithWorker(w *worker.Worker) Options {
 func WithMiddleware(m Middleware) Options {
 	return func(c *Client) {
 		c.middlewares = append(c.middlewares, m)
-	}
-}
-
-func WithFinalizer(f queue.Finalizer) Options {
-	return func(c *Client) {
-		c.finalizers = append(c.finalizers, f)
 	}
 }
 
@@ -143,7 +136,6 @@ func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queu
 			c.doSaveJob(task, serviceMethod, args, reply)
 		}
 	})
-	task.OnDone(c.finalizers...)
 
 	return task
 }
@@ -196,7 +188,6 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		})
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
-	task.OnDone(c.finalizers...)
 	task.OnDone(finalizer...)
 	if !c.block {
 		c.mq.Publish(task, finalizer...)
