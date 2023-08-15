@@ -146,9 +146,10 @@ func TestRPCMap(t *testing.T) {
 	// wait until server starts
 	wg.Wait()
 	tm := utils.ToMap(&TestArgs{"bbbb", 0})
+	ret := map[string]any{}
 	//var reply TestReply
 	// time sleep is to check the numbers of reused connections.
 	time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
-	cli.Call("TestRPCStruct.Hello", tm, nil)
-
+	cli.Call("TestRPCStruct.Hello", tm, &ret)
+	t.Log(ret)
 }

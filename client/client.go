@@ -14,16 +14,26 @@ import (
 type Options func(*Client)
 type Middleware func(task queue.Task, serviceMethod string, args any, reply any)
 
+type RunMethod int
+
+const (
+	SYNC RunMethod = iota
+	ASYNC
+	ONCE
+)
+
 type Job struct {
 	// task id
-	ID     string
-	Method string
-	Args   map[string]any
+	ID        string
+	RunMethod RunMethod
+	Method    string
+	Args      map[string]any
 }
 
 type Client struct {
 	block       bool
 	noretry     bool
+	finalizers  []queue.Finalizer
 	middlewares []Middleware
 	nq          *worker.Worker
 	mq          *worker.Worker
@@ -61,6 +71,12 @@ func EnableNonBlocking() Options {
 	}
 }
 
+func WithFinalizer(f queue.Finalizer) Options {
+	return func(c *Client) {
+		c.finalizers = append(c.finalizers, f)
+	}
+}
+
 func NewClient(rpc adapter.Client, opts ...Options) *Client {
 	c := &Client{
 		block: true,
@@ -82,6 +98,13 @@ func (c *Client) doMiddleware(task queue.Task, serviceMethod string, args any, r
 	}
 }
 
+func (c *Client) runMethod() RunMethod {
+	if c.block {
+		return SYNC
+	}
+	return ASYNC
+}
+
 func (c *Client) doRecoverJob() {
 	if c.storage == nil {
 		return
@@ -92,19 +115,27 @@ func (c *Client) doRecoverJob() {
 		if job.ID == "" {
 			return true
 		}
-		c.Call(job.Method, job.Args, nil)
+		switch job.RunMethod {
+		case SYNC:
+			c.Call(job.Method, job.Args, nil)
+		case ASYNC:
+			c.CallAsync(job.Method, job.Args, nil)
+		case ONCE:
+			c.CallOnce(job.Method, job.Args, nil)
+		}
 		return true
 	})
 }
 
-func (c *Client) doSaveJob(task queue.Task, serviceMethod string, args any, reply any) {
+func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod string, args any, reply any) {
 	if c.storage == nil {
 		return
 	}
 	job := &Job{
-		ID:     task.ID(),
-		Method: serviceMethod,
-		Args:   utils.ToMap(args),
+		ID:        task.ID(),
+		RunMethod: runMethod,
+		Method:    serviceMethod,
+		Args:      utils.ToMap(args),
 	}
 	b, _ := json.Marshal(job)
 	c.storage.Store(job.ID, b)
@@ -131,6 +162,7 @@ func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queu
 		}, opts...)
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
+	task.OnDone(c.finalizers...)
 	return task
 }
 
@@ -138,7 +170,7 @@ func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer 
 	task := c.newTask(serviceMethod, args, reply)
 	task.OnDone(func(ok bool, task queue.Task) {
 		if !ok {
-			c.doSaveJob(task, serviceMethod, args, reply)
+			c.doSaveJob(task, ASYNC, serviceMethod, args, reply)
 		}
 	})
 
@@ -150,7 +182,7 @@ func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...qu
 	task := c.newTask(serviceMethod, args, reply)
 	task.OnDone(func(ok bool, task queue.Task) {
 		if !ok {
-			c.doSaveJob(task, serviceMethod, args, reply)
+			c.doSaveJob(task, c.runMethod(), serviceMethod, args, reply)
 		}
 	})
 
@@ -192,7 +224,7 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		})
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
-	task.OnDone(finalizer...)
+	task.OnDone(c.finalizers...)
 	if !c.block {
 		c.mq.Publish(task, finalizer...)
 		return nil
