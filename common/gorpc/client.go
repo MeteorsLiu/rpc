@@ -1,6 +1,7 @@
 package gorpc
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -18,6 +19,7 @@ import (
 )
 
 var (
+	ErrCleaned     = fmt.Errorf("connection has been cleaned")
 	ErrConnect     = fmt.Errorf("fail to connect to the target address")
 	ErrInitialized = fmt.Errorf("fail to initilize the connection pool")
 	ErrNoServer    = fmt.Errorf("no rpc server")
@@ -91,6 +93,8 @@ type conn struct {
 type connPool struct {
 	updateMu   sync.RWMutex
 	resizeMu   sync.RWMutex
+	close      context.Context
+	doClose    context.CancelFunc
 	seq        atomic.Int64
 	connWarper adapter.DialerFunc
 	conns      []*conn
@@ -135,13 +139,47 @@ func newConnPool(c adapter.DialerFunc) *connPool {
 		connWarper: c,
 		conns:      make([]*conn, 128),
 	}
-
+	cp.close, cp.doClose = context.WithCancel(context.Background())
 	newc, err := c()
 	if err != nil {
 		return nil
 	}
 
 	cp.conns[0] = newConn(newc)
+
+	go func() {
+		// the reason why the default cleaning period is 155s is that
+		// go's default keepalive idle is 15s and 9 rounds
+		// so the keepalive timeout is 150s, 5s for connection died.
+		ticker := time.NewTicker(155 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				// resized
+				if len(cp.conns) > 128 {
+					cp.forEach(func(i int, c *conn) bool {
+						if c.TryLock() {
+							c.err = ErrCleaned
+							c.c.Close()
+							c.Unlock()
+						}
+						return true
+					})
+				} else {
+					cp.forEach(func(i int, c *conn) bool {
+						if c.err != nil && c.TryLock() {
+							c.Reconnect(cp.dial, nil, nil)
+							c.Unlock()
+						}
+						return true
+					})
+				}
+			case <-cp.close.Done():
+				return
+			}
+		}
+	}()
 	return cp
 }
 
@@ -220,10 +258,6 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 	}
 	// no connections
 	id, cn, err = c.new()
-	if err != nil {
-		cn.err = err
-		cn.Unlock()
-	}
 	ok = err == nil
 	cc = cn.c
 	return
@@ -255,6 +289,7 @@ func (c *connPool) setServer(dialer adapter.DialerFunc) {
 
 func (c *connPool) Close() error {
 	var err error
+	c.doClose()
 	c.forEach(func(id int, c *conn) bool {
 		if e := c.c.Close(); e != nil {
 			err = e
