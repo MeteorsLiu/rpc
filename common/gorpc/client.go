@@ -96,6 +96,7 @@ type connPool struct {
 	close      context.Context
 	doClose    context.CancelFunc
 	seq        atomic.Int64
+	cnt        atomic.Int64
 	connWarper adapter.DialerFunc
 	conns      []*conn
 }
@@ -191,11 +192,9 @@ func (c *connPool) dial() (io.ReadWriteCloser, error) {
 	return dialerFunc()
 }
 
-func (c *connPool) new() (id int, cn *conn, err error) {
+func (c *connPool) push(cn *conn) (id int) {
 	id = int(c.seq.Add(1))
-	cn = newConn(nil)
 	cn.id = id
-	cn.Lock()
 	resize := false
 	if id >= cap(c.conns) {
 		c.resizeMu.Lock()
@@ -210,6 +209,30 @@ func (c *connPool) new() (id int, cn *conn, err error) {
 	if !resize {
 		c.conns[id] = cn
 	}
+	return
+}
+
+func (c *connPool) pop() (id int, cn *conn) {
+	seq := c.seq.Load()
+	if seq == 0 {
+		return
+	}
+	id = int((c.cnt.Add(1) - 1) % seq)
+
+	c.resizeMu.RLock()
+	cc := c.conns[id]
+	c.resizeMu.RUnlock()
+
+	if cc != nil && cc.TryLock() {
+		cn = cc
+	}
+	return
+}
+
+func (c *connPool) new() (id int, cn *conn, err error) {
+	cn = newConn(nil)
+	cn.Lock()
+	id = c.push(cn)
 	newc, err := c.dial()
 	if err != nil {
 		cn.err = err
@@ -236,22 +259,28 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 	var cn *conn
 	var err error
 
-	c.forEach(func(i int, cn *conn) bool {
-		if cn.TryLock() {
-			if cn.err != nil {
-				if err := cn.Reconnect(c.dial, nil, func(cnn *conn) {
-					cnn.Unlock()
-				}); err != nil {
-					return true
+	id, cn = c.pop()
+	if cn == nil {
+		c.forEach(func(i int, cn *conn) bool {
+			if cn.TryLock() {
+				if cn.err != nil {
+					if err := cn.Reconnect(c.dial, nil, func(cnn *conn) {
+						cnn.Unlock()
+					}); err != nil {
+						return true
+					}
 				}
+				id = i
+				cc = cn.c
+				ok = true
+				return false
 			}
-			id = i
-			cc = cn.c
-			ok = true
-			return false
-		}
-		return true
-	})
+			return true
+		})
+	} else {
+		cc = cn.c
+		ok = true
+	}
 
 	if ok {
 		return
@@ -264,10 +293,9 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 }
 
 func (c *connPool) Put(id int, err ...error) {
-	if id >= cap(c.conns) {
-		return
-	}
+	c.resizeMu.RLock()
 	cn := c.conns[id]
+	c.resizeMu.RUnlock()
 	if cn == nil {
 		return
 	}

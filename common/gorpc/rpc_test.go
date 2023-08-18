@@ -64,6 +64,7 @@ func TestRPC(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	t.Log(cli.(*GoRPCClient).conn.seq.Load())
 }
 
 func BenchmarkHashMap(b *testing.B) {
@@ -149,7 +150,6 @@ func TestRPCMap(t *testing.T) {
 	ret := map[string]any{}
 	//var reply TestReply
 	// time sleep is to check the numbers of reused connections.
-	time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 	cli.Call("TestRPCStruct.Hello", tm, &ret)
 	t.Log(ret)
 }
