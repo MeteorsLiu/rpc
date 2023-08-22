@@ -143,7 +143,6 @@ func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFai
 func newConnPool(c adapter.DialerFunc) (*connPool, error) {
 	cp := &connPool{
 		connWarper: c,
-		conns:      make([]*conn, 128),
 	}
 	cp.close, cp.doClose = context.WithCancel(context.Background())
 	newc, err := c()
@@ -151,7 +150,7 @@ func newConnPool(c adapter.DialerFunc) (*connPool, error) {
 		return nil, err
 	}
 
-	cp.conns[0] = newConn(newc)
+	cp.conns = append(cp.conns, newConn(newc))
 
 	go func() {
 		// the reason why the default cleaning period is 155s is that
@@ -164,7 +163,7 @@ func newConnPool(c adapter.DialerFunc) (*connPool, error) {
 			case <-ticker.C:
 				// resized
 				if len(cp.conns) > 128 {
-					cp.forEach(func(i int, c *conn) bool {
+					cp.forEachLockFree(func(i int, c *conn) bool {
 						if c.TryLock() {
 							c.err = ErrCleaned
 							c.c.Close()
@@ -173,7 +172,7 @@ func newConnPool(c adapter.DialerFunc) (*connPool, error) {
 						return true
 					})
 				} else {
-					cp.forEach(func(i int, c *conn) bool {
+					cp.forEachLockFree(func(i int, c *conn) bool {
 						if c.err != nil && c.TryLock() {
 							c.Reconnect(cp.dial, nil, nil)
 							c.Unlock()
@@ -198,36 +197,22 @@ func (c *connPool) dial() (io.ReadWriteCloser, error) {
 }
 
 func (c *connPool) push(cn *conn) (id int) {
-	id = int(c.seq.Add(1))
-	cn.id = id
-	resize := false
-	if id >= cap(c.conns) {
-		c.resizeMu.Lock()
-		if id >= cap(c.conns) {
-			// let append to call growslice() to resize the slices.
-			c.conns = append(c.conns, cn)
-			c.conns = c.conns[:cap(c.conns)]
-			resize = true
-		}
+	c.resizeMu.Lock()
+	defer func() {
+		id = int(c.seq.Add(1))
+		cn.id = id
 		c.resizeMu.Unlock()
-	}
-	if !resize {
-		c.conns[id] = cn
-	}
+	}()
+	c.conns = append(c.conns, cn)
 	return
 }
 
 func (c *connPool) pop() (id int, cn *conn) {
 	seq := c.seq.Load()
-	if seq == 0 {
-		return
+	if seq > 0 {
+		id = int((c.cnt.Add(1) - 1) % seq)
 	}
-	id = int((c.cnt.Add(1) - 1) % seq)
-
-	c.resizeMu.RLock()
 	cc := c.conns[id]
-	c.resizeMu.RUnlock()
-
 	if cc != nil && cc.TryLock() {
 		cn = cc
 	}
@@ -253,6 +238,16 @@ func (c *connPool) forEach(f func(int, *conn) bool) {
 	defer c.resizeMu.RUnlock()
 	// don't use range, because range will do a large copy
 	for id := 0; id < len(c.conns); id++ {
+		current := c.conns[id]
+		if current == nil || !f(id, current) {
+			return
+		}
+	}
+}
+
+func (c *connPool) forEachLockFree(f func(int, *conn) bool) {
+	// don't use range, because range will do a large copy
+	for id := 0; id < int(c.seq.Load())+1; id++ {
 		current := c.conns[id]
 		if current == nil || !f(id, current) {
 			return
