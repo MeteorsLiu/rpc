@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
@@ -58,7 +59,11 @@ func WithClientCert(cert tls.Certificate) RPCClientOption {
 
 func WithClientDialer(dialer adapter.DialerFunc) RPCClientOption {
 	return func(gr *GoRPCClient) {
-		gr.conn = newConnPool(dialer)
+		var err error
+		gr.conn, err = newConnPool(dialer)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
@@ -135,7 +140,7 @@ func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFai
 	return nil
 }
 
-func newConnPool(c adapter.DialerFunc) *connPool {
+func newConnPool(c adapter.DialerFunc) (*connPool, error) {
 	cp := &connPool{
 		connWarper: c,
 		conns:      make([]*conn, 128),
@@ -143,7 +148,7 @@ func newConnPool(c adapter.DialerFunc) *connPool {
 	cp.close, cp.doClose = context.WithCancel(context.Background())
 	newc, err := c()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	cp.conns[0] = newConn(newc)
@@ -181,7 +186,7 @@ func newConnPool(c adapter.DialerFunc) *connPool {
 			}
 		}
 	}()
-	return cp
+	return cp, nil
 }
 
 func (c *connPool) dial() (io.ReadWriteCloser, error) {
@@ -340,14 +345,15 @@ func NewGoRPCClient(address string, opts ...RPCClientOption) (adapter.Client, er
 	for _, o := range opts {
 		o(cc)
 	}
+	var err error
 	switch {
 	case cc.tls == nil && cc.conn == nil:
-		cc.conn = newConnPool(DefaultDialerFunc(address))
+		cc.conn, err = newConnPool(DefaultDialerFunc(address))
 	case cc.tls != nil && cc.conn == nil:
-		cc.conn = newConnPool(DefaultTLSDialerFunc(address, cc.tls))
+		cc.conn, err = newConnPool(DefaultTLSDialerFunc(address, cc.tls))
 	}
 	if cc.conn == nil {
-		return nil, ErrInitialized
+		return nil, err
 	}
 
 	return cc, nil
