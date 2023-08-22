@@ -293,9 +293,7 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 }
 
 func (c *connPool) Put(id int, err ...error) {
-	c.resizeMu.RLock()
 	cn := c.conns[id]
-	c.resizeMu.RUnlock()
 	if cn == nil {
 		return
 	}
