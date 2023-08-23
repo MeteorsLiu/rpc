@@ -198,12 +198,11 @@ func (c *connPool) dial() (io.ReadWriteCloser, error) {
 
 func (c *connPool) push(cn *conn) (id int) {
 	c.resizeMu.Lock()
-	defer func() {
-		id = int(c.seq.Add(1))
-		cn.id = id
-		c.resizeMu.Unlock()
-	}()
 	c.conns = append(c.conns, cn)
+	c.resizeMu.Unlock()
+
+	id = int(c.seq.Add(1))
+	cn.id = id
 	return
 }
 
