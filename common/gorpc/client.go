@@ -1,7 +1,9 @@
 package gorpc
 
 import (
+	"bytes"
 	"context"
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -9,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"runtime"
@@ -17,9 +20,11 @@ import (
 	"time"
 
 	"github.com/MeteorsLiu/rpc/adapter"
+	"golang.org/x/crypto/ocsp"
 )
 
 var (
+	ErrCertError   = fmt.Errorf("cert error")
 	ErrCleaned     = fmt.Errorf("connection has been cleaned")
 	ErrConnect     = fmt.Errorf("fail to connect to the target address")
 	ErrInitialized = fmt.Errorf("fail to initilize the connection pool")
@@ -31,12 +36,84 @@ func IsRPCServerError(err error) bool {
 	return ok
 }
 
+func IsCertError(err error) bool {
+	return errors.Is(err, ErrCertError)
+}
+
 type RPCClientOption func(*GoRPCClient)
+
+func queryOCSP(url string, client, issuer *x509.Certificate) error {
+	req, err := ocsp.CreateRequest(client, issuer, &ocsp.RequestOptions{
+		Hash: crypto.SHA256,
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(req))
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/ocsp-request")
+	httpReq.Header.Set("Accept", "application/ocsp-response")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ErrCertError
+	}
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	ocspResp, err := ocsp.ParseResponseForCert(b, client, issuer)
+	if err != nil {
+		return ErrCertError
+	}
+
+	if ocspResp.Status != ocsp.Good {
+		return ErrCertError
+	}
+	return nil
+}
+
+func verifyPeerCertificate(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
+	if len(verifiedChains) == 0 || len(verifiedChains[0]) < 2 {
+		return nil
+	}
+	client := verifiedChains[0][0]
+	issuer := verifiedChains[0][1]
+
+	if len(client.OCSPServer) > 0 && client.OCSPServer[0] != "" {
+		if err := queryOCSP(client.OCSPServer[0], client, issuer); err != nil {
+			// ignore the case when we connect to the ocsp server fail
+			if IsCertError(err) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func defaultTLSConfig() *tls.Config {
+	return &tls.Config{
+		VerifyPeerCertificate: verifyPeerCertificate,
+	}
+}
 
 func WithCACert(cert []byte) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		if gr.tls == nil {
-			gr.tls = &tls.Config{}
+			gr.tls = defaultTLSConfig()
 		}
 		if gr.tls.RootCAs == nil {
 			gr.tls.RootCAs = x509.NewCertPool()
@@ -48,7 +125,7 @@ func WithCACert(cert []byte) RPCClientOption {
 func WithClientCert(cert tls.Certificate) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		if gr.tls == nil {
-			gr.tls = &tls.Config{}
+			gr.tls = defaultTLSConfig()
 		}
 		if gr.tls.Certificates == nil {
 			gr.tls.Certificates = []tls.Certificate{}
@@ -70,6 +147,7 @@ func WithClientDialer(dialer adapter.DialerFunc) RPCClientOption {
 func WithClientTLSConfig(c *tls.Config) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		gr.tls = c
+		gr.tls.VerifyPeerCertificate = verifyPeerCertificate
 	}
 }
 
