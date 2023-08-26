@@ -20,6 +20,7 @@ const (
 	SYNC RunMethod = iota
 	ASYNC
 	ONCE
+	ASYNC_ONCE
 )
 
 type Job struct {
@@ -122,12 +123,14 @@ func (c *Client) doRecoverJob() {
 			c.CallAsync(job.Method, job.Args, nil)
 		case ONCE:
 			c.CallOnce(job.Method, job.Args, nil)
+		case ASYNC_ONCE:
+			c.CallAsyncOnce(job.Method, job.Args, nil)
 		}
 		return true
 	})
 }
 
-func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod string, args any, reply any) {
+func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod string, args any) {
 	if c.storage == nil {
 		return
 	}
@@ -170,7 +173,7 @@ func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer 
 	task := c.newTask(serviceMethod, args, reply)
 	task.OnDone(func(ok bool, task queue.Task) {
 		if !ok {
-			c.doSaveJob(task, ASYNC, serviceMethod, args, reply)
+			c.doSaveJob(task, ASYNC, serviceMethod, args)
 		}
 	})
 
@@ -182,7 +185,7 @@ func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...qu
 	task := c.newTask(serviceMethod, args, reply)
 	task.OnDone(func(ok bool, task queue.Task) {
 		if !ok {
-			c.doSaveJob(task, c.runMethod(), serviceMethod, args, reply)
+			c.doSaveJob(task, c.runMethod(), serviceMethod, args)
 		}
 	})
 
@@ -202,6 +205,21 @@ func (c *Client) CallOnce(serviceMethod string, args any, reply any, finalizer .
 	}
 	return c.nq.PublishSync(task, finalizer...)
 
+}
+
+func (c *Client) CallAsyncOnce(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
+	task := c.newTask(serviceMethod, args, reply, queue.WithNoRetryFunc())
+
+	c.nq.Publish(task, finalizer...)
+	return nil
+}
+
+func (c *Client) Save(runMethod RunMethod, serviceMethod string, args any) queue.Finalizer {
+	return func(ok bool, task queue.Task) {
+		if !ok {
+			c.doSaveJob(task, runMethod, serviceMethod, args)
+		}
+	}
 }
 
 func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
