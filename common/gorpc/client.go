@@ -41,6 +41,7 @@ func IsCertError(err error) bool {
 }
 
 type RPCClientOption func(*GoRPCClient)
+type PoolOptions func(*connPool)
 
 func queryOCSP(url string, client, issuer *x509.Certificate) error {
 	req, err := ocsp.CreateRequest(client, issuer, &ocsp.RequestOptions{
@@ -164,6 +165,18 @@ func DefaultTLSDialerFunc(address string, c *tls.Config) adapter.DialerFunc {
 	}
 }
 
+func WithTLSFail(f func()) RPCClientOption {
+	return func(gr *GoRPCClient) {
+		gr.onTLSFail = f
+	}
+}
+
+func withTLSFail(f func()) PoolOptions {
+	return func(cp *connPool) {
+		cp.onTLSFail = f
+	}
+}
+
 type conn struct {
 	id  int
 	c   *rpc.Client
@@ -182,6 +195,7 @@ type connPool struct {
 	seq        atomic.Int64
 	cnt        atomic.Int64
 	connWarper adapter.DialerFunc
+	onTLSFail  func()
 	conns      []*conn
 }
 
@@ -219,13 +233,21 @@ func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFai
 	return nil
 }
 
-func newConnPool(c adapter.DialerFunc) (*connPool, error) {
+func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) (*connPool, error) {
 	cp := &connPool{
 		connWarper: c,
 	}
+
+	for _, o := range opts {
+		o(cp)
+	}
+
 	cp.close, cp.doClose = context.WithCancel(context.Background())
 	newc, err := c()
 	if err != nil {
+		if IsCertError(err) && cp.onTLSFail != nil {
+			cp.onTLSFail()
+		}
 		return nil, err
 	}
 
@@ -262,7 +284,11 @@ func (c *connPool) dial() (io.ReadWriteCloser, error) {
 	c.updateMu.RLock()
 	dialerFunc = c.connWarper
 	c.updateMu.RUnlock()
-	return dialerFunc()
+	rwc, err := dialerFunc()
+	if err != nil && IsCertError(err) && c.onTLSFail != nil {
+		c.onTLSFail()
+	}
+	return rwc, err
 }
 
 func (c *connPool) push(cn *conn) (id int) {
@@ -393,8 +419,9 @@ func (c *connPool) Close() error {
 }
 
 type GoRPCClient struct {
-	conn *connPool
-	tls  *tls.Config
+	onTLSFail func()
+	conn      *connPool
+	tls       *tls.Config
 }
 
 func NewGoRPCClient(address string, opts ...RPCClientOption) (adapter.Client, error) {
@@ -406,11 +433,15 @@ func NewGoRPCClient(address string, opts ...RPCClientOption) (adapter.Client, er
 		o(cc)
 	}
 	var err error
+	var poolOpts []PoolOptions
+	if cc.onTLSFail != nil {
+		poolOpts = append(poolOpts, withTLSFail(cc.onTLSFail))
+	}
 	switch {
 	case cc.tls == nil && cc.conn == nil:
-		cc.conn, err = newConnPool(DefaultDialerFunc(address))
+		cc.conn, err = newConnPool(DefaultDialerFunc(address), poolOpts...)
 	case cc.tls != nil && cc.conn == nil:
-		cc.conn, err = newConnPool(DefaultTLSDialerFunc(address, cc.tls))
+		cc.conn, err = newConnPool(DefaultTLSDialerFunc(address, cc.tls), poolOpts...)
 	}
 	if cc.conn == nil {
 		return nil, err
