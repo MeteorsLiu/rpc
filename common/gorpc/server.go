@@ -17,7 +17,9 @@ type RPCServerOption func(*GoRPCServer)
 func WithClientCA(cert []byte) RPCServerOption {
 	return func(gr *GoRPCServer) {
 		if gr.tls == nil {
-			gr.tls = &tls.Config{}
+			gr.tls = &tls.Config{
+				MinVersion: tls.VersionTLS13,
+			}
 		}
 		if gr.tls.ClientCAs == nil {
 			gr.tls.ClientCAs = x509.NewCertPool()
@@ -30,7 +32,9 @@ func WithClientCA(cert []byte) RPCServerOption {
 func WithServerCert(cert tls.Certificate) RPCServerOption {
 	return func(gr *GoRPCServer) {
 		if gr.tls == nil {
-			gr.tls = &tls.Config{}
+			gr.tls = &tls.Config{
+				MinVersion: tls.VersionTLS13,
+			}
 		}
 		if gr.tls.Certificates == nil {
 			gr.tls.Certificates = []tls.Certificate{}

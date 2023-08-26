@@ -106,6 +106,7 @@ func verifyPeerCertificate(_ [][]byte, verifiedChains [][]*x509.Certificate) err
 
 func defaultTLSConfig() *tls.Config {
 	return &tls.Config{
+		MinVersion:            tls.VersionTLS13,
 		VerifyPeerCertificate: verifyPeerCertificate,
 	}
 }
