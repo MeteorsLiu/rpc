@@ -172,7 +172,7 @@ func (c *Client) newTask(
 		}, opts...)
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
-	if needResult {
+	if needResult && reply != nil {
 		// must be first
 		task.OnDone(func(_ bool, task queue.Task) {
 			task.TaskContext().Store("reply", reply)
@@ -256,9 +256,11 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
 
-	task.OnDone(func(_ bool, task queue.Task) {
-		task.TaskContext().Store("reply", reply)
-	})
+	if reply != nil {
+		task.OnDone(func(_ bool, task queue.Task) {
+			task.TaskContext().Store("reply", reply)
+		})
+	}
 	task.OnDone(c.finalizers...)
 	if !c.block {
 		c.mq.Publish(task, finalizer...)
