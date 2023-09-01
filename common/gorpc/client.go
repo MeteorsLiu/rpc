@@ -243,15 +243,17 @@ func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) (*connPool, error) {
 	}
 
 	cp.close, cp.doClose = context.WithCancel(context.Background())
+	cn := newConn(nil)
 	newc, err := c()
 	if err != nil {
 		if IsCertError(err) && cp.onTLSFail != nil {
 			cp.onTLSFail()
 		}
-		return nil, err
+		cn.err = err
 	}
+	cn.SetConn(newc)
 
-	cp.conns = append(cp.conns, newConn(newc))
+	cp.conns = append(cp.conns, cn)
 
 	go func() {
 		// the reason why the default cleaning period is 155s is that

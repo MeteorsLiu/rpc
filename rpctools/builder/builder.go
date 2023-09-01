@@ -215,10 +215,7 @@ func (a *AST) ToGIN() string {
 			gg.abortContext(g, fmt.Sprintln("cannot unmarshal input data", err))
 			return
 		}
-		if err := gg.cli.Call("%s.%s", args, &ret); err != nil {
-			gg.abortContext(g, fmt.Sprintln("rpc error: ", err))
-			return
-		}
+		gg.cli.CallAsync("%s.%s", args, &ret)
 		g.JSON(http.StatusOK, gin.H{
 			"status": "ok", 
 			"callback": ret,
@@ -289,10 +286,7 @@ func (a *AST) ToGIN() string {
 		}
 
 		WriteFuncf(`
-		if err := gg.cli.Call("%s.%s", args, &ret); err != nil {
-			gg.abortContext(g, fmt.Sprintln("rpc error: ", err))
-			return
-		}
+		gg.cli.CallAsync("%s.%s", args, &ret)
 		g.JSON(http.StatusOK, gin.H{
 			"status": "ok", 
 			"callback": ret,
@@ -311,7 +305,7 @@ func (a *AST) ToGIN() string {
 		"fmt"
 		"strconv"
 		rpcStruct "%s"
-		"github.com/MeteorsLiu/rpc/adapter"
+		"github.com/MeteorsLiu/rpc/client"
 		"github.com/gin-gonic/gin"
 	)
 	type Options func(*GINGenerated)
@@ -329,12 +323,12 @@ func (a *AST) ToGIN() string {
 	}
 
 	type GINGenerated struct {
-		cli 	  adapter.Client
+		cli 	  *client.Client
 		onFail    gin.HandlerFunc
 		onSuccess gin.HandlerFunc
 	}
 
-	func NewGINGenerated(cli adapter.Client, r gin.IRoutes, opts ...Options) *GINGenerated {
+	func NewGINGenerated(cli *client.Client, r gin.IRoutes, opts ...Options) *GINGenerated {
 		gg := &GINGenerated{cli: cli}
 		for _, o := range opts {
 			o(gg)	

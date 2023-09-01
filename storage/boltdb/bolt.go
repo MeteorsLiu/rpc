@@ -19,7 +19,11 @@ var (
 )
 
 func NewBoltDB(saveTo ...string) (adapter.Storage, error) {
-	db, err := bolt.Open("my.db", 0600, &bolt.Options{Timeout: 5 * time.Second})
+	fileName := "saved.db"
+	if len(saveTo) > 0 && saveTo[0] != "" {
+		fileName = saveTo[0]
+	}
+	db, err := bolt.Open(fileName, 0600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, err
 	}
