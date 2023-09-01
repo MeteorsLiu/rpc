@@ -355,7 +355,16 @@ func (c *connPool) Get() (ok bool, id int, cc *rpc.Client) {
 	var err error
 
 	id, cn = c.pop()
-	if cn == nil {
+	if cn == nil || cn.err != nil {
+		if cn != nil {
+			if err := cn.Reconnect(c.dial, nil, func(cnn *conn) {
+				cnn.Unlock()
+			}); err == nil {
+				cc = cn.c
+				ok = true
+				return
+			}
+		}
 		c.forEach(func(i int, cn *conn) bool {
 			if cn.TryLock() {
 				if cn.err != nil {
