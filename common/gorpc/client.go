@@ -233,7 +233,7 @@ func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFai
 	return nil
 }
 
-func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) (*connPool, error) {
+func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) *connPool {
 	cp := &connPool{
 		connWarper: c,
 	}
@@ -278,7 +278,7 @@ func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) (*connPool, error) {
 			}
 		}
 	}()
-	return cp, nil
+	return cp
 }
 
 func (c *connPool) dial() (io.ReadWriteCloser, error) {
@@ -450,9 +450,9 @@ func NewGoRPCClient(address string, opts ...RPCClientOption) (adapter.Client, er
 	}
 	switch {
 	case cc.tls == nil && cc.conn == nil:
-		cc.conn, err = newConnPool(DefaultDialerFunc(address), poolOpts...)
+		cc.conn = newConnPool(DefaultDialerFunc(address), poolOpts...)
 	case cc.tls != nil && cc.conn == nil:
-		cc.conn, err = newConnPool(DefaultTLSDialerFunc(address, cc.tls), poolOpts...)
+		cc.conn = newConnPool(DefaultTLSDialerFunc(address, cc.tls), poolOpts...)
 	}
 	if cc.conn == nil {
 		return nil, err

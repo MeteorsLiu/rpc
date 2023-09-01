@@ -1,6 +1,6 @@
 github.com/MeteorsLiu/getm v0.0.0-20230625105117-9fb01f35f3bf h1:Jfugl3oWfUs/aPgcDYPAh18aJ6ePKdmTJK5nD+3UtSQ=
-github.com/MeteorsLiu/simpleMQ v0.0.0-20230901143252-7be94e8f631e h1:qimMVUsikgcju+FGT79egKKSaiBOHTbsFxz/A3vQQNw=
-github.com/MeteorsLiu/simpleMQ v0.0.0-20230901143252-7be94e8f631e/go.mod h1:w1+Z6WaG8x4yBCIoCfJxVRj3ErfOV8t929JkMB4u35c=
+github.com/MeteorsLiu/simpleMQ v0.0.0-20230901145129-b2318a2283be h1:5aZBIVMufuNfSlRQAgIgKWgN7mZesXtSk17jm/wku3A=
+github.com/MeteorsLiu/simpleMQ v0.0.0-20230901145129-b2318a2283be/go.mod h1:w1+Z6WaG8x4yBCIoCfJxVRj3ErfOV8t929JkMB4u35c=
 github.com/alphadose/haxmap v1.3.0 h1:C/2LboOnPCZP27GmmSXOcwx360st0P8N0fTJ3voefKc=
 github.com/alphadose/haxmap v1.3.0/go.mod h1:rjHw1IAqbxm0S3U5tD16GoKsiAd8FWx5BJ2IYqXwgmM=
 github.com/boltdb/bolt v1.3.1 h1:JQmyP4ZBrce+ZQu0dY660FMfatumYDLun9hBCUVIkF4=

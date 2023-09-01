@@ -144,13 +144,19 @@ func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod s
 	c.storage.Store(job.ID, b)
 }
 
-func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queue.TaskOptions) queue.Task {
+func (c *Client) newTask(
+	serviceMethod string,
+	args, reply any,
+	needResult bool,
+	opts ...queue.TaskOptions,
+) queue.Task {
 	var task queue.Task
 	if c.noretry {
 		opts = append(opts, queue.WithNoRetryFunc())
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
+				task.SetError(err)
 				return nil
 			}
 			return err
@@ -159,30 +165,36 @@ func (c *Client) newTask(serviceMethod string, args any, reply any, opts ...queu
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
+				task.SetError(err)
 				return nil
 			}
 			return err
 		}, opts...)
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
+	if needResult {
+		// must be first
+		task.OnDone(func(_ bool, task queue.Task) {
+			task.TaskContext().Store("reply", reply)
+		})
+	}
 	task.OnDone(c.finalizers...)
 	return task
 }
 
 func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
-	task := c.newTask(serviceMethod, args, reply)
+	task := c.newTask(serviceMethod, args, reply, true)
 	task.OnDone(func(ok bool, task queue.Task) {
 		if !ok {
 			c.doSaveJob(task, ASYNC, serviceMethod, args)
 		}
 	})
-
 	c.mq.Publish(task, finalizer...)
 	return nil
 }
 
 func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
-	task := c.newTask(serviceMethod, args, reply)
+	task := c.newTask(serviceMethod, args, reply, !c.block)
 	task.OnDone(func(ok bool, task queue.Task) {
 		if !ok {
 			c.doSaveJob(task, c.runMethod(), serviceMethod, args)
@@ -197,7 +209,7 @@ func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...qu
 }
 
 func (c *Client) CallOnce(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
-	task := c.newTask(serviceMethod, args, reply, queue.WithNoRetryFunc())
+	task := c.newTask(serviceMethod, args, reply, !c.block, queue.WithNoRetryFunc())
 
 	if !c.block {
 		c.nq.Publish(task, finalizer...)
@@ -208,8 +220,7 @@ func (c *Client) CallOnce(serviceMethod string, args any, reply any, finalizer .
 }
 
 func (c *Client) CallAsyncOnce(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
-	task := c.newTask(serviceMethod, args, reply, queue.WithNoRetryFunc())
-
+	task := c.newTask(serviceMethod, args, reply, true, queue.WithNoRetryFunc())
 	c.nq.Publish(task, finalizer...)
 	return nil
 }
@@ -228,6 +239,7 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		task = queue.NewTask(func() error {
 			err := c.rpc.CallWithConn(conn, serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
+				task.SetError(err)
 				return nil
 			}
 			return err
@@ -236,12 +248,17 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
+				task.SetError(err)
 				return nil
 			}
 			return err
 		})
 	}
 	c.doMiddleware(task, serviceMethod, args, reply)
+
+	task.OnDone(func(_ bool, task queue.Task) {
+		task.TaskContext().Store("reply", reply)
+	})
 	task.OnDone(c.finalizers...)
 	if !c.block {
 		c.mq.Publish(task, finalizer...)
