@@ -139,7 +139,7 @@ func WithClientCert(cert tls.Certificate) RPCClientOption {
 func WithClientDialer(dialer adapter.DialerFunc) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		var err error
-		gr.conn, err = newConnPool(dialer)
+		gr.conn = newConnPool(dialer)
 		if err != nil {
 			log.Fatal(err)
 		}
