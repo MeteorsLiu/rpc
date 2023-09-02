@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"io"
+	"sync/atomic"
 
 	"github.com/MeteorsLiu/rpc/adapter"
 	"github.com/MeteorsLiu/rpc/common/gorpc"
@@ -40,6 +41,7 @@ type Client struct {
 	mq          *worker.Worker
 	rpc         adapter.Client
 	storage     adapter.Storage
+	deleted     atomic.Bool
 }
 
 func WithStorage(storage adapter.Storage) Options {
@@ -156,7 +158,7 @@ func (c *Client) newTask(
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
-				task.SetError(err)
+				task.SetTaskError(err)
 				return nil
 			}
 			return err
@@ -165,7 +167,7 @@ func (c *Client) newTask(
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
-				task.SetError(err)
+				task.SetTaskError(err)
 				return nil
 			}
 			return err
@@ -185,7 +187,7 @@ func (c *Client) newTask(
 func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply, true)
 	task.OnDone(func(ok bool, task queue.Task) {
-		if !ok {
+		if !ok && !c.deleted.Load() {
 			c.doSaveJob(task, ASYNC, serviceMethod, args)
 		}
 	})
@@ -196,7 +198,7 @@ func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer 
 func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply, !c.block)
 	task.OnDone(func(ok bool, task queue.Task) {
-		if !ok {
+		if !ok && !c.deleted.Load() {
 			c.doSaveJob(task, c.runMethod(), serviceMethod, args)
 		}
 	})
@@ -227,7 +229,7 @@ func (c *Client) CallAsyncOnce(serviceMethod string, args any, reply any, finali
 
 func (c *Client) Save(runMethod RunMethod, serviceMethod string, args any) queue.Finalizer {
 	return func(ok bool, task queue.Task) {
-		if !ok {
+		if !ok && !c.deleted.Load() {
 			c.doSaveJob(task, runMethod, serviceMethod, args)
 		}
 	}
@@ -239,7 +241,7 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		task = queue.NewTask(func() error {
 			err := c.rpc.CallWithConn(conn, serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
-				task.SetError(err)
+				task.SetTaskError(err)
 				return nil
 			}
 			return err
@@ -248,7 +250,7 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		task = queue.NewTask(func() error {
 			err := c.rpc.Call(serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
-				task.SetError(err)
+				task.SetTaskError(err)
 				return nil
 			}
 			return err
@@ -269,7 +271,10 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 	return c.nq.PublishSync(task, finalizer...)
 }
 
-func (c *Client) Close() error {
+func (c *Client) Close(isDeleted ...bool) error {
+	if len(isDeleted) > 0 && isDeleted[0] {
+		c.deleted.Store(true)
+	}
 	c.nq.Stop()
 	c.mq.Stop()
 	return nil
