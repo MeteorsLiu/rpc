@@ -160,3 +160,32 @@ func TestRPCMap(t *testing.T) {
 	cli.Call("TestRPCStruct.Hello", tm, &ret)
 	t.Log(ret)
 }
+
+func TestRPCMiddleware(t *testing.T) {
+	l, _ := net.Listen("tcp", "127.0.0.1:9999")
+	defer l.Close()
+	srv := NewGoRPCServer(WithServerMiddleware(func(methodName string, args any) error {
+		t.Log("call: ", methodName, args)
+
+		return fmt.Errorf("middleware error")
+	}), WithServerFinalizer(func(err error, methodName string, args, reply any) {
+		t.Log("call: ", methodName, args, reply, err)
+
+	}))
+	srv.Register(&TestRPCStruct{})
+	cli, _ := NewGoRPCClient("127.0.0.1:9999")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		srv.Accept(l)
+	}()
+	// wait until server starts
+	wg.Wait()
+	tm := utils.ToMap(&TestArgs{"bbbb", 0})
+	ret := map[string]any{}
+	//var reply TestReply
+	// time sleep is to check the numbers of reused connections.
+	err := cli.Call("TestRPCStruct.Hello", tm, &ret)
+	t.Log(ret, err)
+}
