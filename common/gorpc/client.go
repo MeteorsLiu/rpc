@@ -75,7 +75,7 @@ func queryOCSP(url string, client, issuer *x509.Certificate) error {
 		return err
 	}
 
-	ocspResp, err := ocsp.ParseResponseForCert(b, client, issuer)
+	ocspResp, err := ocsp.ParseResponse(b, client)
 	if err != nil {
 		return ErrCertError
 	}
@@ -213,6 +213,10 @@ func newConn(c io.ReadWriteCloser) *conn {
 }
 
 func (c *conn) SetConn(cc io.ReadWriteCloser) {
+	// do safe work
+	if cc == nil {
+		return
+	}
 	c.c = jsonrpc.NewClient(cc)
 }
 

@@ -14,7 +14,7 @@ import (
 
 type Options func(*Client)
 type Middleware func(task queue.Task, serviceMethod string, args any, reply any)
-
+type NeedSave func(bool, *Client, queue.Task) bool
 type RunMethod int
 
 const (
@@ -37,16 +37,25 @@ type Client struct {
 	noretry     bool
 	finalizers  []queue.Finalizer
 	middlewares []Middleware
+	needSave    NeedSave
 	nq          *worker.Worker
 	mq          *worker.Worker
 	rpc         adapter.Client
-	storage     adapter.Storage
-	deleted     atomic.Bool
+	// export to custom need save function
+	Storage adapter.Storage
+	// export to custom need save function
+	Deleted atomic.Bool
+}
+
+func DefaultSave() NeedSave {
+	return func(ok bool, c *Client, _ queue.Task) bool {
+		return !ok && !c.Deleted.Load()
+	}
 }
 
 func WithStorage(storage adapter.Storage) Options {
 	return func(c *Client) {
-		c.storage = storage
+		c.Storage = storage
 	}
 }
 
@@ -68,6 +77,12 @@ func DisableRetry() Options {
 	}
 }
 
+func WithSaveCondition(f NeedSave) Options {
+	return func(c *Client) {
+		c.needSave = f
+	}
+}
+
 func EnableNonBlocking() Options {
 	return func(c *Client) {
 		c.block = false
@@ -82,8 +97,9 @@ func WithFinalizer(f queue.Finalizer) Options {
 
 func NewClient(rpc adapter.Client, opts ...Options) *Client {
 	c := &Client{
-		block: true,
-		nq:    worker.NewWorker(0, 0, nil, true),
+		block:    true,
+		needSave: DefaultSave(),
+		nq:       worker.NewWorker(0, 0, nil, true),
 		// limit the worker number
 		mq:  worker.NewWorker(10000, 1, queue.NewSimpleQueue(queue.WithSimpleQueueCap(10000)), true),
 		rpc: rpc,
@@ -109,10 +125,10 @@ func (c *Client) runMethod() RunMethod {
 }
 
 func (c *Client) doRecoverJob() {
-	if c.storage == nil {
+	if c.Storage == nil {
 		return
 	}
-	c.storage.ForEach(func(id string, info []byte) bool {
+	c.Storage.ForEach(func(id string, info []byte) bool {
 		var job Job
 		json.Unmarshal(info, &job)
 		if job.ID == "" {
@@ -133,7 +149,7 @@ func (c *Client) doRecoverJob() {
 }
 
 func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod string, args any) {
-	if c.storage == nil {
+	if c.Storage == nil {
 		return
 	}
 	job := &Job{
@@ -143,7 +159,7 @@ func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod s
 		Args:      utils.ToMap(args),
 	}
 	b, _ := json.Marshal(job)
-	c.storage.Store(job.ID, b)
+	c.Storage.Store(job.ID, b)
 }
 
 func (c *Client) newTask(
@@ -187,7 +203,7 @@ func (c *Client) newTask(
 func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply, true)
 	task.OnDone(func(ok bool, task queue.Task) {
-		if !ok && !c.deleted.Load() {
+		if c.needSave(ok, c, task) {
 			c.doSaveJob(task, ASYNC, serviceMethod, args)
 		}
 	})
@@ -198,7 +214,7 @@ func (c *Client) CallAsync(serviceMethod string, args any, reply any, finalizer 
 func (c *Client) Call(serviceMethod string, args any, reply any, finalizer ...queue.Finalizer) error {
 	task := c.newTask(serviceMethod, args, reply, !c.block)
 	task.OnDone(func(ok bool, task queue.Task) {
-		if !ok && !c.deleted.Load() {
+		if c.needSave(ok, c, task) {
 			c.doSaveJob(task, c.runMethod(), serviceMethod, args)
 		}
 	})
@@ -229,7 +245,7 @@ func (c *Client) CallAsyncOnce(serviceMethod string, args any, reply any, finali
 
 func (c *Client) Save(runMethod RunMethod, serviceMethod string, args any) queue.Finalizer {
 	return func(ok bool, task queue.Task) {
-		if !ok && !c.deleted.Load() {
+		if c.needSave(ok, c, task) {
 			c.doSaveJob(task, runMethod, serviceMethod, args)
 		}
 	}
@@ -273,7 +289,7 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 
 func (c *Client) Close(isDeleted ...bool) error {
 	if len(isDeleted) > 0 && isDeleted[0] {
-		c.deleted.Store(true)
+		c.Deleted.Store(true)
 	}
 	c.nq.Stop()
 	c.mq.Stop()

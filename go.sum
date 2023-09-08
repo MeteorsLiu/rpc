@@ -1,6 +1,6 @@
 github.com/MeteorsLiu/getm v0.0.0-20230625105117-9fb01f35f3bf h1:Jfugl3oWfUs/aPgcDYPAh18aJ6ePKdmTJK5nD+3UtSQ=
-github.com/MeteorsLiu/simpleMQ v1.0.0 h1:aaiyTIapDDugEe7aIJiMxcGIatjgPOD/VbWKHm6MNuA=
-github.com/MeteorsLiu/simpleMQ v1.0.0/go.mod h1:w1+Z6WaG8x4yBCIoCfJxVRj3ErfOV8t929JkMB4u35c=
+github.com/MeteorsLiu/simpleMQ v1.0.1 h1:XVBgoXyAIDICGlDClhNqTTaVziEiG7+q2bWguX67X7M=
+github.com/MeteorsLiu/simpleMQ v1.0.1/go.mod h1:w1+Z6WaG8x4yBCIoCfJxVRj3ErfOV8t929JkMB4u35c=
 github.com/alphadose/haxmap v1.3.0 h1:C/2LboOnPCZP27GmmSXOcwx360st0P8N0fTJ3voefKc=
 github.com/alphadose/haxmap v1.3.0/go.mod h1:rjHw1IAqbxm0S3U5tD16GoKsiAd8FWx5BJ2IYqXwgmM=
 github.com/boltdb/bolt v1.3.1 h1:JQmyP4ZBrce+ZQu0dY660FMfatumYDLun9hBCUVIkF4=
@@ -16,9 +16,9 @@ github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+
 github.com/redis/go-redis/v9 v9.1.0 h1:137FnGdk+EQdCbye1FW+qOEcY5S+SpY9T0NiuqvtfMY=
 github.com/redis/go-redis/v9 v9.1.0/go.mod h1:urWj3He21Dj5k4TK1y59xH8Uj6ATueP8AH1cY3lZl4c=
 github.com/v2pro/plz v0.0.0-20221028024117-e5f9aec5b631 h1:WYq/4UeJfAorBY7ncC31bVxI031x4MUCQvF+z12fIYA=
-golang.org/x/crypto v0.12.0 h1:tFM/ta59kqch6LlvYnPa0yx5a83cL2nHflFhYKvv9Yk=
-golang.org/x/crypto v0.12.0/go.mod h1:NF0Gs7EO5K4qLn+Ylc+fih8BSTeIjAP05siRnAh98yw=
+golang.org/x/crypto v0.13.0 h1:mvySKfSWJ+UKUii46M40LOvyWfN0s2U+46/jDd0e6Ck=
+golang.org/x/crypto v0.13.0/go.mod h1:y6Z2r+Rw4iayiXXAIxJIDAJ1zMW4yaTpebo8fPOliYc=
 golang.org/x/exp v0.0.0-20221031165847-c99f073a8326 h1:QfTh0HpN6hlw6D3vu8DAwC8pBIwikq0AI1evdm+FksE=
 golang.org/x/exp v0.0.0-20221031165847-c99f073a8326/go.mod h1:CxIveKay+FTh1D0yPZemJVgC/95VzuuOLq5Qi4xnoYc=
-golang.org/x/sys v0.11.0 h1:eG7RXZHdqOJ1i+0lgLgCpSXAp6M3LYlAo6osgSi0xOM=
-golang.org/x/sys v0.11.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.12.0 h1:CM0HF96J0hcLAwsHPJZjfdNzs0gftsLfgKt57wWHJ0o=
+golang.org/x/sys v0.12.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
