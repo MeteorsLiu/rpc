@@ -290,10 +290,14 @@ func (server *Server) ServeCodec(codec adapter.ServerCodec) {
 			defer wg.Done()
 			arg := argv.Interface()
 			for _, m := range server.Middlewares {
+				// cannot change the reply, but return the errors
+				// i think that's enough
 				if err := m(mtype.method.Name, arg); err != nil {
 					if debugLog {
 						log.Println("rpc: middleware interruputed: ", err)
 					}
+					server.sendResponse(sending, req, replyv.Interface(), codec, err.Error())
+					server.freeRequest(req)
 					return
 				}
 			}
