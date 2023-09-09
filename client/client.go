@@ -266,7 +266,7 @@ func (c *Client) CallWithConn(conn io.ReadWriteCloser, serviceMethod string, arg
 		}, queue.WithNoRetryFunc())
 	} else {
 		task = queue.NewTask(func() error {
-			err := c.rpc.Call(serviceMethod, args, reply)
+			err := c.rpc.CallWithConn(conn, serviceMethod, args, reply)
 			if gorpc.IsRPCServerError(err) {
 				task.SetTaskError(err)
 				return nil
