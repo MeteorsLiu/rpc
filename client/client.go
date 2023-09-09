@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"sync/atomic"
 
 	"github.com/MeteorsLiu/rpc/adapter"
@@ -134,6 +135,7 @@ func (c *Client) doRecoverJob() {
 		if job.ID == "" {
 			return true
 		}
+		log.Println("recover: ", info)
 		switch job.RunMethod {
 		case SYNC:
 			c.Call(job.Method, job.Args, nil)
@@ -160,6 +162,8 @@ func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod s
 	}
 	b, _ := json.Marshal(job)
 	c.Storage.Store(job.ID, b)
+
+	log.Println("saved: ", string(b))
 }
 
 func (c *Client) newTask(
