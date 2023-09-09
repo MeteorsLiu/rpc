@@ -474,8 +474,7 @@ func (g *GoRPCClient) Call(serviceMethod string, args any, reply any) (err error
 retry:
 	if err = conn.Call(serviceMethod, args, reply); err != nil {
 		// we only need reconnect when the connection is broken.
-		log.Println(err, IsRPCServerError(err))
-		if !errors.Is(err, rpc.ErrShutdown) && !IsRPCServerError(err) {
+		if !IsRPCServerError(err) {
 			g.conn.Put(id, err)
 			ok, id, conn = g.conn.Get()
 			if !ok {
