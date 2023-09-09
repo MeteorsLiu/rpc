@@ -3,7 +3,6 @@ package client
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"sync/atomic"
 
 	"github.com/MeteorsLiu/rpc/adapter"
@@ -49,8 +48,8 @@ type Client struct {
 }
 
 func DefaultSave() NeedSave {
-	return func(ok bool, c *Client, _ queue.Task) bool {
-		return !ok && !c.Deleted.Load()
+	return func(ok bool, c *Client, task queue.Task) bool {
+		return (!ok || task.IsReachLimits()) && !c.Deleted.Load()
 	}
 }
 
@@ -108,7 +107,7 @@ func NewClient(rpc adapter.Client, opts ...Options) *Client {
 	for _, o := range opts {
 		o(c)
 	}
-	c.doRecoverJob()
+	c.DoRecoverJob()
 	return c
 }
 
@@ -125,7 +124,8 @@ func (c *Client) runMethod() RunMethod {
 	return ASYNC
 }
 
-func (c *Client) doRecoverJob() {
+// export to user control
+func (c *Client) DoRecoverJob() {
 	if c.Storage == nil {
 		return
 	}
@@ -135,7 +135,6 @@ func (c *Client) doRecoverJob() {
 		if job.ID == "" {
 			return true
 		}
-		log.Println("recover: ", info)
 		switch job.RunMethod {
 		case SYNC:
 			c.Call(job.Method, job.Args, nil)
@@ -163,7 +162,6 @@ func (c *Client) doSaveJob(task queue.Task, runMethod RunMethod, serviceMethod s
 	b, _ := json.Marshal(job)
 	c.Storage.Store(job.ID, b)
 
-	log.Println("saved: ", string(b))
 }
 
 func (c *Client) newTask(
