@@ -75,7 +75,7 @@ func queryOCSP(url string, client, issuer *x509.Certificate) error {
 		return err
 	}
 
-	ocspResp, err := ocsp.ParseResponse(b, client)
+	ocspResp, err := ocsp.ParseResponseForCert(b, client, issuer)
 	if err != nil {
 		return ErrCertError
 	}

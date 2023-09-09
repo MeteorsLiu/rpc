@@ -165,7 +165,8 @@ func TestRPCMiddleware(t *testing.T) {
 	l, _ := net.Listen("tcp", "127.0.0.1:9999")
 	defer l.Close()
 	srv := NewGoRPCServer(WithServerMiddleware(func(methodName string, args any) error {
-		t.Log("call: ", methodName, args)
+		_, ok := args.(*TestArgs)
+		t.Log("call: ", methodName, args, ok)
 
 		return fmt.Errorf("middleware error")
 	}), WithServerFinalizer(func(err error, methodName string, args, reply any) {
