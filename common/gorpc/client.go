@@ -161,7 +161,11 @@ func DefaultDialerFunc(address string) adapter.DialerFunc {
 
 func DefaultTLSDialerFunc(address string, c *tls.Config) adapter.DialerFunc {
 	return func() (io.ReadWriteCloser, error) {
-		return tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", address, c)
+		rwc, err := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", address, c)
+		if err != nil {
+			log.Println("TLS Dial: ", err)
+		}
+		return rwc, err
 	}
 }
 
@@ -250,7 +254,6 @@ func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) *connPool {
 	cn := newConn(nil)
 	newc, err := c()
 	if err != nil {
-		log.Println(newc.(net.Conn).RemoteAddr(), err)
 		cn.err = err
 	} else {
 		cn.SetConn(newc)
