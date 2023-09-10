@@ -250,12 +250,10 @@ func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) *connPool {
 	cn := newConn(nil)
 	newc, err := c()
 	if err != nil {
-		if IsCertError(err) && cp.onTLSFail != nil {
-			cp.onTLSFail()
-		}
 		cn.err = err
+	} else {
+		cn.SetConn(newc)
 	}
-	cn.SetConn(newc)
 
 	cp.conns = append(cp.conns, cn)
 
