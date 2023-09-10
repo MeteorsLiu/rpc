@@ -163,7 +163,7 @@ func DefaultTLSDialerFunc(address string, c *tls.Config) adapter.DialerFunc {
 	return func() (io.ReadWriteCloser, error) {
 		rwc, err := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", address, c)
 		if err != nil {
-			log.Println("TLS Dial: ", rwc.RemoteAddr(), err)
+			log.Println("TLS Dial: ", address, err)
 		}
 		return rwc, err
 	}
