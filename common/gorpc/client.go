@@ -250,6 +250,7 @@ func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) *connPool {
 	cn := newConn(nil)
 	newc, err := c()
 	if err != nil {
+		log.Println(err)
 		cn.err = err
 	} else {
 		cn.SetConn(newc)
