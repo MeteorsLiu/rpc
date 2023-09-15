@@ -159,11 +159,14 @@ func DefaultDialerFunc(address string) adapter.DialerFunc {
 	}
 }
 
-func DefaultTLSDialerFunc(address string, c *tls.Config) adapter.DialerFunc {
+func DefaultTLSDialerFunc(address string, c *tls.Config, onTLSFail func()) adapter.DialerFunc {
 	return func() (io.ReadWriteCloser, error) {
 		rwc, err := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", address, c)
 		if err != nil {
 			log.Println("TLS Dial: ", address, err)
+			if IsCertError(err) && onTLSFail != nil {
+				onTLSFail()
+			}
 		}
 		return rwc, err
 	}
@@ -172,12 +175,6 @@ func DefaultTLSDialerFunc(address string, c *tls.Config) adapter.DialerFunc {
 func WithTLSFail(f func()) RPCClientOption {
 	return func(gr *GoRPCClient) {
 		gr.onTLSFail = f
-	}
-}
-
-func withTLSFail(f func()) PoolOptions {
-	return func(cp *connPool) {
-		cp.onTLSFail = f
 	}
 }
 
@@ -199,7 +196,6 @@ type connPool struct {
 	seq        atomic.Int64
 	cnt        atomic.Int64
 	connWarper adapter.DialerFunc
-	onTLSFail  func()
 	conns      []*conn
 }
 
@@ -241,13 +237,9 @@ func (c *conn) Reconnect(dialer adapter.DialerFunc, onSuccess func(*conn), onFai
 	return nil
 }
 
-func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) *connPool {
+func newConnPool(c adapter.DialerFunc) *connPool {
 	cp := &connPool{
 		connWarper: c,
-	}
-
-	for _, o := range opts {
-		o(cp)
 	}
 
 	cp.close, cp.doClose = context.WithCancel(context.Background())
@@ -288,15 +280,10 @@ func newConnPool(c adapter.DialerFunc, opts ...PoolOptions) *connPool {
 }
 
 func (c *connPool) dial() (io.ReadWriteCloser, error) {
-	var dialerFunc adapter.DialerFunc
 	c.updateMu.RLock()
-	dialerFunc = c.connWarper
+	dialerFunc := c.connWarper
 	c.updateMu.RUnlock()
-	rwc, err := dialerFunc()
-	if err != nil && IsCertError(err) && c.onTLSFail != nil {
-		c.onTLSFail()
-	}
-	return rwc, err
+	return dialerFunc()
 }
 
 func (c *connPool) push(cn *conn) (id int) {
@@ -450,15 +437,11 @@ func NewGoRPCClient(address string, opts ...RPCClientOption) (adapter.Client, er
 		o(cc)
 	}
 	var err error
-	var poolOpts []PoolOptions
-	if cc.onTLSFail != nil {
-		poolOpts = append(poolOpts, withTLSFail(cc.onTLSFail))
-	}
 	switch {
 	case cc.tls == nil && cc.conn == nil:
-		cc.conn = newConnPool(DefaultDialerFunc(address), poolOpts...)
+		cc.conn = newConnPool(DefaultDialerFunc(address))
 	case cc.tls != nil && cc.conn == nil:
-		cc.conn = newConnPool(DefaultTLSDialerFunc(address, cc.tls), poolOpts...)
+		cc.conn = newConnPool(DefaultTLSDialerFunc(address, cc.tls, cc.onTLSFail))
 	}
 	if cc.conn == nil {
 		return nil, err
@@ -505,7 +488,7 @@ func (g *GoRPCClient) SetRPCServer(address string) error {
 		return ErrNoServer
 	}
 	if g.tls != nil {
-		g.conn.setServer(DefaultTLSDialerFunc(address, g.tls))
+		g.conn.setServer(DefaultTLSDialerFunc(address, g.tls, g.onTLSFail))
 	} else {
 		g.conn.setServer(DefaultDialerFunc(address))
 	}
