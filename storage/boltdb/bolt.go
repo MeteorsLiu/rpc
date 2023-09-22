@@ -36,25 +36,25 @@ func NewBoltDB(saveTo ...string) (adapter.Storage, error) {
 
 func (b *Bolt) Store(id string, info []byte) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("tasks"))
-		if b == nil {
+		bs := tx.Bucket([]byte("tasks"))
+		if bs == nil {
 			return ErrBucketsNotExists
 		}
-		return b.Put([]byte(id), info)
+		return bs.Put([]byte(id), info)
 	})
 }
 
 func (b *Bolt) ForEach(f func(id string, info []byte) bool) error {
-	return b.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("tasks"))
-		if b == nil {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bs := tx.Bucket([]byte("tasks"))
+		if bs == nil {
 			return ErrBucketsNotExists
 		}
-		return b.ForEach(func(k, v []byte) error {
+		return bs.ForEach(func(k, v []byte) error {
 			if !f(string(k), v) {
 				return common.ErrIterStop
 			}
-			b.Delete(k)
+			bs.Delete(k)
 			return nil
 		})
 	})
@@ -62,11 +62,11 @@ func (b *Bolt) ForEach(f func(id string, info []byte) bool) error {
 
 func (b *Bolt) Get(id string) (info []byte, err error) {
 	err = b.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("tasks"))
-		if b == nil {
+		bs := tx.Bucket([]byte("tasks"))
+		if bs == nil {
 			return ErrBucketsNotExists
 		}
-		c := b.Get([]byte(id))
+		c := bs.Get([]byte(id))
 		if c == nil {
 			return ErrItemNotExists
 		}
@@ -79,11 +79,11 @@ func (b *Bolt) Get(id string) (info []byte, err error) {
 
 func (b *Bolt) Delete(id string) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("tasks"))
-		if b == nil {
+		bs := tx.Bucket([]byte("tasks"))
+		if bs == nil {
 			return ErrBucketsNotExists
 		}
-		return b.Delete([]byte(id))
+		return bs.Delete([]byte(id))
 	})
 }
 
