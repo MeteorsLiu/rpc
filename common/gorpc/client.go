@@ -263,7 +263,7 @@ func newConnPool(c adapter.DialerFunc) *connPool {
 			select {
 			case <-ticker.C:
 				cp.forEachLockFree(func(i int, c *conn) bool {
-					if c.TryLock() {
+					if c != nil && c.TryLock() {
 						c.err = ErrCleaned
 						c.c.Close()
 						c.Unlock()
