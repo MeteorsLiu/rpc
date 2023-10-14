@@ -253,29 +253,6 @@ func newConnPool(c adapter.DialerFunc) *connPool {
 
 	cp.conns = append(cp.conns, cn)
 
-	go func() {
-		// the reason why the default cleaning period is 155s is that
-		// go's default keepalive idle is 15s and 9 rounds
-		// so the keepalive timeout is 150s, 5s for connection died.
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				cp.forEachLockFree(func(i int, c *conn) bool {
-					if c != nil && c.TryLock() {
-						c.err = ErrCleaned
-						c.c.Close()
-						c.Unlock()
-					}
-					return true
-				})
-
-			case <-cp.close.Done():
-				return
-			}
-		}
-	}()
 	return cp
 }
 
