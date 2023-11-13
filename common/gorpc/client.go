@@ -24,8 +24,8 @@ import (
 )
 
 var (
+	ErrConnInit    = fmt.Errorf("connection is not initilized")
 	ErrCertError   = fmt.Errorf("cert error")
-	ErrCleaned     = fmt.Errorf("connection has been cleaned")
 	ErrConnect     = fmt.Errorf("fail to connect to the target address")
 	ErrInitialized = fmt.Errorf("fail to initilize the connection pool")
 	ErrNoServer    = fmt.Errorf("no rpc server")
@@ -244,13 +244,10 @@ func newConnPool(c adapter.DialerFunc) *connPool {
 
 	cp.close, cp.doClose = context.WithCancel(context.Background())
 	cn := newConn(nil)
-	newc, err := c()
-	if err != nil {
-		cn.err = err
-	} else {
-		cn.SetConn(newc)
-	}
-
+	cn.err = ErrConnInit
+	// pool must be initialized,
+	// however, the rpc server may not be ready right now,
+	// so we set an error to indicate to reconnect in the future request.
 	cp.conns = append(cp.conns, cn)
 
 	return cp
