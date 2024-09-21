@@ -37,6 +37,9 @@ func IsRPCServerError(err error) bool {
 }
 
 func IsCertError(err error) bool {
+	if _, ok := err.(x509.CertificateInvalidError); ok {
+		return true
+	}
 	return errors.Is(err, ErrCertError)
 }
 
