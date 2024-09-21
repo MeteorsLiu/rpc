@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/rpc"
 	"net/rpc/jsonrpc"
-	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -38,7 +37,9 @@ func IsRPCServerError(err error) bool {
 }
 
 func IsCertError(err error) bool {
-	log.Println(reflect.TypeOf(err))
+	if _, ok := err.(*tls.CertificateVerificationError); ok {
+		return true
+	}
 	if _, ok := err.(x509.CertificateInvalidError); ok {
 		return true
 	}
